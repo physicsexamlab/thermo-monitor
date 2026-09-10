@@ -1,0 +1,1213 @@
+<!--
+  Physics Exam Lab - Thermo Monitor（温度・圧力モニター）
+  熱力学実験装置（シリンジ）用。絶対温度 K と気圧 hPa の時系列測定。
+  doppler-circle.html の UI をベースにしている。
+  ファームウェア: BME280_BLE_XIAO/BME280_BLE_XIAO.ino
+  Copyright (c) 2026 一般社団法人 国際物理オリンピック2023記念協会
+  Licensed under the Creative Commons BY-NC 4.0 International License.
+  See https://creativecommons.org/licenses/by-nc/4.0/
+  -->
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>温度・圧力モニター</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;600;800&display=swap');
+
+      :root {
+        --bg:        #ffffff;
+        --panel:     #ffffff;
+        --border:    #c4ccd4;
+        --text:      #1a2b3c;
+        --dim:       #5a6b7a;
+        --header-bg: #ffffff;
+
+        --col-accent: #0077cc;
+        --col-temp:  #cc3300;
+        --col-press: #0077cc;
+        --danger:    #d42045;
+        --warn:      #b86e00;
+        --accent2:   #008855;
+      }
+
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        background: var(--bg); color: var(--text);
+        font-family: 'Exo 2', sans-serif; font-weight: 300;
+        min-height: 100vh; display: flex; flex-direction: column;
+      }
+
+      header {
+        position: relative; z-index: 10;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 14px 28px; border-bottom: 1px solid var(--border);
+        background: var(--header-bg);
+      }
+      .logo {
+        font-family: 'Exo 2', 'Hiragino Sans', 'Yu Gothic', sans-serif;
+        font-size: 1.15rem; font-weight: 800; letter-spacing: 0.06em;
+        color: var(--col-accent);
+      }
+
+      .status-group { display: flex; gap: 20px; align-items: center; }
+      .status-badge {
+        display: flex; align-items: center; gap: 7px;
+        font-family: 'Share Tech Mono', monospace; font-size: 0.78rem; color: var(--dim);
+      }
+      .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+      .status-badge.connected { color: var(--accent2); }
+      .status-badge.connected .status-dot { background: var(--accent2); animation: pulse 2s infinite; }
+      @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+      main {
+        position: relative; z-index: 1; flex: 1;
+        display: flex; flex-direction: column; gap: 18px;
+        padding: 20px 28px; max-width: 1400px; width: 100%; margin: 0 auto;
+      }
+
+      .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      button {
+        font-family: 'Exo 2', sans-serif; font-weight: 600; font-size: 0.82rem;
+        letter-spacing: 0.08em; text-transform: uppercase; padding: 9px 20px;
+        border-radius: 4px; border: 1px solid transparent; cursor: pointer;
+        transition: all 0.2s; background: transparent;
+      }
+      button:disabled { opacity: 0.35; cursor: not-allowed; }
+      .btn-connect { border-color: var(--col-accent); color: var(--col-accent); }
+      .btn-connect:hover:not(:disabled) { background: var(--col-accent); color: #fff; }
+      .btn-start { border-color: var(--accent2); color: var(--accent2); }
+      .btn-start:hover:not(:disabled) { background: var(--accent2); color: #fff; }
+      .btn-stop  { border-color: var(--danger); color: var(--danger); }
+      .btn-stop:hover:not(:disabled) { background: var(--danger); color: #fff; }
+      .btn-reset { border-color: var(--dim); color: var(--dim); }
+      .btn-reset:hover:not(:disabled) { background: var(--dim); color: #fff; }
+      .btn-csv   { border-color: var(--warn); color: var(--warn); }
+      .btn-csv:hover:not(:disabled) { background: var(--warn); color: #fff; }
+      /* 書き出し系は右端にまとめる（CSV = 主・画像 = 副。同じ色相で枠だけ淡く）*/
+      .export-group { display: flex; gap: 10px; margin-left: auto; }
+      .btn-img   { border-color: color-mix(in srgb, var(--warn) 35%, #ffffff); color: var(--warn); }
+      .btn-img:hover:not(:disabled) { background: var(--warn); color: #fff; border-color: var(--warn); }
+
+      .interval-group {
+        display: flex; align-items: center; gap: 8px;
+        padding-left: 6px; border-left: 1px solid var(--border);
+      }
+      .interval-group label {
+        font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim);
+      }
+      select {
+        font-family: 'Share Tech Mono', monospace; font-size: 0.82rem;
+        padding: 8px 10px; border-radius: 4px;
+        border: 1px solid var(--border); background: var(--panel); color: var(--text);
+        cursor: pointer;
+      }
+
+      .info-strip { display: flex; gap: 10px; flex-wrap: wrap; }
+      .info-strip > * { flex: 1 1 0; min-width: 132px; }
+      .stat-card {
+        background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+        padding: 12px 16px;
+      }
+      .stat-card.temp  { border-left: 3px solid var(--col-temp); }
+      .stat-card.press { border-left: 3px solid var(--col-press); }
+      .stat-label { font-size: 0.65rem; text-transform: uppercase; color: var(--dim); margin-bottom: 4px; }
+      .stat-value { font-family: 'Share Tech Mono', monospace; font-size: 1.4rem; }
+
+      .chart-area { display: flex; flex-direction: column; gap: 16px; }
+      .chart-panel {
+        background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+        padding: 16px 18px;
+      }
+      .chart-panel.temp  { border-top: 2px solid var(--col-temp); }
+      .chart-panel.press { border-top: 2px solid var(--col-press); }
+      .time-axis-caption {
+        font-family: 'Share Tech Mono', monospace; font-size: 0.72rem;
+        color: var(--dim); text-align: center; letter-spacing: 0.08em;
+        text-transform: uppercase; margin-top: -6px;
+      }
+      .chart-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+      .chart-title  { font-size: 0.7rem; letter-spacing: 0.15em; text-transform: uppercase; color: var(--dim); }
+
+      @media (max-height: 900px) {
+        main             { gap: 10px; padding: 10px 28px; }
+        header           { padding: 8px 28px; }
+        footer           { padding: 6px 28px 8px; }
+        .controls button { padding: 6px 16px; }
+        .stat-card       { padding: 8px 14px; }
+        .stat-value      { font-size: 1.05rem; }
+        .chart-area      { gap: 8px; }
+        .chart-panel     { padding: 8px 18px; }
+        .chart-header    { margin-bottom: 6px; }
+      }
+
+      .modal-overlay {
+        display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+        z-index: 100; align-items: center; justify-content: center;
+      }
+      .modal-overlay.open { display: flex; }
+      .modal {
+        background: var(--panel); padding: 24px; width: min(720px, 95vw);
+        border-radius: 8px; display: flex; flex-direction: column; gap: 14px;
+      }
+      textarea.csv-out {
+        min-height: 300px; font-family: 'Share Tech Mono', monospace;
+        font-size: 0.78rem; padding: 10px; border: 1px solid var(--border); border-radius: 4px;
+      }
+      .modal-footer { display: flex; justify-content: space-between; align-items: center; }
+      /* 画像書き出しモーダル */
+      .img-preview {
+        border: 1px solid var(--border); border-radius: 4px; background: #ffffff;
+        padding: 8px; max-height: 52vh; overflow: auto; display: flex; justify-content: center;
+      }
+      .img-preview img { max-width: 100%; height: auto; }
+
+      .raw-toggle {
+        display: flex; align-items: center; gap: 6px;
+        font-size: 0.75rem; color: var(--dim); cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+
+    <header>
+      <div class="logo">温度・圧力モニター</div>
+      <div class="status-group">
+        <div class="status-badge" id="bleBadge">
+          <div class="status-dot"></div>
+          <span id="bleText">BLE: —</span>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="controls">
+        <button class="btn-connect" id="btnConnect">Connect Sensor</button>
+        <button class="btn-start" id="btnStart" disabled>Record</button>
+        <button class="btn-stop"  id="btnStop"  disabled>Stop</button>
+        <button class="btn-reset" id="btnReset" disabled>Reset</button>
+        <div class="interval-group">
+          <label for="selInterval">記録間隔</label>
+          <select id="selInterval"></select>
+        </div>
+        <div class="export-group">
+          <button class="btn-csv" id="btnCsv" disabled>CSV Export</button>
+          <button class="btn-img" id="btnImg" disabled>画像保存</button>
+        </div>
+      </div>
+
+      <div class="info-strip">
+        <div class="stat-card temp">
+          <div class="stat-label">絶対温度</div>
+          <div class="stat-value" id="sTempK">—</div>
+        </div>
+        <div class="stat-card press">
+          <div class="stat-label">気圧</div>
+          <div class="stat-value" id="sPress">—</div>
+        </div>
+        <div class="stat-card" style="border-left:3px solid var(--accent2);">
+          <div class="stat-label">経過時間 / 記録点数</div>
+          <div class="stat-value" id="sProgress" style="font-size:1.05rem;">—</div>
+        </div>
+        <div class="stat-card" style="border-left:3px solid var(--dim);">
+          <div class="stat-label">受信状況</div>
+          <div class="stat-value" id="sQuality" style="font-size:0.95rem; font-weight:700; color:var(--dim);">—</div>
+        </div>
+      </div>
+
+      <div class="chart-area">
+        <div class="chart-panel temp">
+          <div class="chart-header">
+            <div class="chart-title">絶対温度 (K)</div>
+            <div id="tempAxisLabel" style="font-family:'Share Tech Mono',monospace;font-size:0.7rem;color:var(--dim);"></div>
+          </div>
+          <canvas id="chartTemp" height="220"></canvas>
+        </div>
+        <div class="chart-panel press">
+          <div class="chart-header">
+            <div class="chart-title">気圧 (hPa)</div>
+            <div id="pressAxisLabel" style="font-family:'Share Tech Mono',monospace;font-size:0.7rem;color:var(--dim);"></div>
+          </div>
+          <canvas id="chartPress" height="220"></canvas>
+        </div>
+        <div class="time-axis-caption">時間 (s)</div>
+      </div>
+    </main>
+
+    <footer style="position:relative;z-index:1;text-align:center;padding:10px 28px 14px;font-size:0.65rem;color:var(--dim);border-top:1px solid var(--border);">
+      Physics Exam Lab - Thermo Monitor &nbsp;|&nbsp;
+      Copyright &copy; 2026 一般社団法人 国際物理オリンピック2023記念協会 &nbsp;|&nbsp;
+      <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener"
+         style="color:var(--dim);text-decoration:underline;">CC BY-NC 4.0</a>
+    </footer>
+
+    <div class="modal-overlay" id="csvModal">
+      <div class="modal">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h2 style="font-size:1rem; font-weight:600;">CSV Data</h2>
+          <button id="btnCloseModal" style="border:none; background:none; font-size:1.5rem; cursor:pointer; line-height:1;">✕</button>
+        </div>
+        <label class="raw-toggle">
+          <input type="checkbox" id="chkRaw">
+          <span id="rawLabel">生データ（平均化なし。ファームの送信レートのまま）を出力する</span>
+        </label>
+        <textarea class="csv-out" id="csvOutput" readonly></textarea>
+        <div class="modal-footer">
+          <span id="csvRowCount" style="font-size:0.75rem; color:var(--dim);"></span>
+          <div style="display:flex; gap:8px;">
+            <button class="btn-reset" id="btnCopy">表計算に貼り付け（コピー）</button>
+            <button class="btn-csv"   id="btnDownload">CSV保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="imgModal">
+      <div class="modal" style="width:min(880px,95vw);">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h2 style="font-size:1rem; font-weight:600;">画像の書き出し</h2>
+          <button id="btnCloseImgModal" style="border:none; background:none; font-size:1.5rem; cursor:pointer; line-height:1;">✕</button>
+        </div>
+        <div class="img-preview"><img id="imgPreview" alt="書き出し画像のプレビュー"></div>
+        <div class="modal-footer">
+          <span id="imgInfo" style="font-size:0.75rem; color:var(--dim); font-family:'Share Tech Mono',monospace;"></span>
+          <div style="display:flex; gap:8px;">
+            <button class="btn-reset" id="btnImgCopy">画像をコピー</button>
+            <button class="btn-csv"   id="btnImgSave">画像を保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // ═══════════════════════════════════════════════
+      //  記録間隔のドロップダウン
+      //  ★ここを編集すれば選択肢が変わる。実験して決めること。
+      //    sec は「何秒ぶんを 1 点に平均するか」。
+      //    ファームウェアは常に 20 Hz で送ってくるので、
+      //      1 点あたりの平均点数 = sec * 20
+      //    ノイズは 1/sqrt(平均点数) に減る。
+      //
+      //  ★短い側の選択肢は速い過程（ストロークとその直後の緩和）を見るためのもの。
+      //    ・0.05 s (生) … ストロークそのものを見る。温度ノイズは 5 mK のまま
+      //    ・0.1 s        … 気体の緩和 (τ_gas ≈ 1〜2 s) に対して十分細かい
+      //    ・0.2 / 0.5 s  … 4 点 / 10 点平均。ノイズが 1/2 と 1/3 に減る
+      //    温度センサーの τ は 18〜150 s なので、温度側にはこの分解能は要らない。
+      //    要るのは「基準」である圧力側と、ストロークの時刻を正確に押さえるため。
+      // ═══════════════════════════════════════════════
+      const RAW_HZ = 20;            // ファームの送信レート（表示・注記用）
+      const INTERVAL_OPTIONS = [
+        { sec: 0.05, label: '0.05 s (生データ)' },
+        { sec: 0.1,  label: '0.1 s'  },
+        { sec: 0.2,  label: '0.2 s'  },
+        { sec: 0.5,  label: '0.5 s'  },
+        { sec: 1,    label: '1 s'  },
+        { sec: 2,    label: '2 s'  },
+        { sec: 5,    label: '5 s'  },
+        { sec: 10,   label: '10 s' },
+        { sec: 30,   label: '30 s' },
+        { sec: 60,   label: '60 s' },
+      ];
+      const INTERVAL_DEFAULT_SEC = 1;
+
+      // ═══════════════════════════════════════════════
+      //  BLE パケット形式（BME280_BLE_XIAO.ino と一致させること）
+      //    offset size type        field
+      //    0      4    float32 LE  t_s
+      //    4      4    float32 LE  temp_c
+      //    8      4    float32 LE  press_hpa
+      //    12     4    uint32  LE  seq
+      //    16     4    uint32  LE  dev_id   （装置ID = MAC 下位 3 バイト）
+      //
+      //  dev_id をパケットから読む理由:
+      //    BLE のデバイス名は当てにならない。macOS はペリフェラルの名前を OS 側で
+      //    キャッシュし、Bluetooth を off/on しても古い名前を返し続けることがある。
+      //    またアドバタイズパケットは 31 バイトしかなく長い名前は切り詰められる。
+      //    装置の取り違え防止が目的なので、IDはデータストリームから直接読み、
+      //    これを正としてファイル名・書き出し画像の見出しに使う。
+      // ═══════════════════════════════════════════════
+      const PACKET_MIN_BYTES   = 16;   // 旧 16 バイト firmware でも動く
+      const PACKET_TOTAL_BYTES = 20;
+      const KELVIN_OFFSET      = 273.15;
+
+      // グラフの y 軸がつぶれないようにする最小レンジ
+      const MIN_SPAN_K   = 0.5;    // [K]
+      const MIN_SPAN_HPA = 0.5;    // [hPa]
+
+      // ═══════════════════════════════════════════════
+      //  状態
+      // ═══════════════════════════════════════════════
+      let bleDevice   = null;
+      let bleChar     = null;
+      let isConnected = false;
+
+      let isRecording  = false;
+      let firstEspTime = -1;
+      let lastSeq      = -1;
+      let dropCount    = 0;
+      let lastRecvMs   = -1;
+
+      /* ★ファームの t_s は micros() (uint32) 由来なので 2^32 µs =
+         4294.967296 s ＝ 約 71.6 分ごとに 0 へ巻き戻る。そのままだと
+         71.6 分を超えた測定でグラフの時間軸も CSV の時間列も負になる。
+         受信のたびに巻き戻りを数え、単調増加の絶対時刻に直してから使う。
+         判定はしきい値を半周期に取る標準的な unwrap で、
+         35 分ぶん連続で受信が途切れない限り取りこぼさない。 */
+      const ESP_WRAP_S = 4294.967296;   // micros() が一周する秒数
+      let espWraps   = 0;               // これまでの巻き戻り回数
+      let lastEspRaw = -1;              // 直前に受けた生の t_s
+
+      let rawSession = [];          // {elapsed_s, tempC, tempK, presshPa, seq}
+      let binSec     = INTERVAL_DEFAULT_SEC;
+      let agg        = { t: [], k: [], p: [], n: [] };
+      // 再描画のスロットリング。20 Hz で毎サンプル再集計・再描画すると
+      // 20 分 = 24000 点で O(N^2) になり固まる。8 Hz に間引く。
+      let refreshPending = false;
+      let measuredHz = 0;           // 実測の受信レート [Hz]
+      let recordEndTime_s = 0;
+      // 走行スタンプ: Reset 後の最初の Record で確定し、CSV と PNG で共有する。
+      // 保存を押した時刻ではなく「測り始めた時刻」なので、同じデータから出した
+      // CSV と画像が同じ名前になり、レポートの図から元データに戻れる。
+      let runStamp   = null;
+      let deviceName      = '';  // OS が報告した BLE 名（キャッシュで古いことがある）
+      let devIdFromPacket = '';  // パケットから読んだ装置ID (例 "A1B2C3")。こちらが正
+
+      // ═══════════════════════════════════════════════
+      //  平均化（ビニング）
+      //  rawSession 全体から binSec ごとの平均を作り直す。
+      //  毎 notify で作り直しているが、30 分 x 2 Hz = 3600 点なので負荷は無視できる。
+      //  この方式の利点: 記録済みのデータでもドロップダウンを変えれば
+      //  その場で平均間隔を変えて描き直せる。
+      // ═══════════════════════════════════════════════
+      function aggregate(binSeconds) {
+        const out = { t: [], k: [], p: [], n: [] };
+        if (rawSession.length === 0) return out;
+        let curBin = null, sumT = 0, sumK = 0, sumP = 0, cnt = 0;
+        const flush = () => {
+          if (cnt > 0) {
+            out.t.push(sumT / cnt); out.k.push(sumK / cnt);
+            out.p.push(sumP / cnt); out.n.push(cnt);
+          }
+        };
+        for (const s of rawSession) {
+          const b = Math.floor(s.elapsed_s / binSeconds);
+          if (curBin === null) curBin = b;
+          if (b !== curBin) { flush(); curBin = b; sumT = sumK = sumP = 0; cnt = 0; }
+          sumT += s.elapsed_s; sumK += s.tempK; sumP += s.presshPa; cnt++;
+        }
+        flush();
+        return out;
+      }
+
+      function refreshAggregate() {
+        agg = aggregate(binSec);
+        drawAll();
+        updateStats();
+      }
+
+      /* 20 Hz の notify ごとに全再集計をやると 20 分で O(N^2) になって固まる。
+         受信は毎回そのまま溜め、再集計と再描画だけ 8 Hz に間引く。
+         人間の目には 8 Hz で十分で、データは 20 Hz のまま欠けない。 */
+      function requestRefresh() {
+        if (refreshPending) return;
+        refreshPending = true;
+        setTimeout(() => { refreshPending = false; refreshAggregate(); }, 125);
+      }
+
+      // ═══════════════════════════════════════════════
+      //  BLE notify
+      // ═══════════════════════════════════════════════
+      function onNotify(event) {
+        const dv = event.target.value;
+        if (!dv || dv.byteLength < PACKET_MIN_BYTES) {
+          log(`[ble] short packet: ${dv ? dv.byteLength : 0} B (expected ${PACKET_TOTAL_BYTES})`);
+          return;
+        }
+        const t_s       = dv.getFloat32(0,  true);
+        const temp_c    = dv.getFloat32(4,  true);
+        const press_hpa = dv.getFloat32(8,  true);
+        const seq       = dv.getUint32(12,  true);
+        // 装置ID。OS が報告する名前ではなくこれを信用する。
+        if (dv.byteLength >= 20) {
+          const id = (dv.getUint32(16, true) & 0xFFFFFF).toString(16).toUpperCase().padStart(6, '0');
+          if (id !== devIdFromPacket) {
+            devIdFromPacket = id;
+            setBleStatus('CONNECTED: ' + deviceLabel(), true);   // 真の名前に直す
+          }
+        }
+
+        lastRecvMs = performance.now();
+
+        /* micros() の 32 bit 巻き戻り（71.6 分ごと）をここで解く。
+           Record 前でも数えておかないと、記録の途中で 1 周ぶん飛ぶ。 */
+        if (lastEspRaw >= 0 && t_s < lastEspRaw - ESP_WRAP_S / 2) espWraps++;
+        lastEspRaw = t_s;
+        const t_abs = t_s + espWraps * ESP_WRAP_S;
+
+        // 接続中は Record 前でも「受信状況」の確認に使う
+        if (!isRecording) {
+          document.getElementById('sTempK').textContent  = (temp_c + KELVIN_OFFSET).toFixed(2) + ' K';
+          document.getElementById('sPress').textContent  = press_hpa.toFixed(2) + ' hPa';
+          setQuality('待機中 (Record で記録開始)', 'var(--dim)');
+          return;
+        }
+
+        // 取りこぼし検出（ファームの通し番号を使う）
+        if (lastSeq >= 0 && seq > lastSeq + 1) dropCount += seq - lastSeq - 1;
+        lastSeq = seq;
+
+        if (firstEspTime < 0) firstEspTime = t_abs;
+        const elapsed_s = t_abs - firstEspTime;
+
+        rawSession.push({
+          elapsed_s,
+          tempC:    temp_c,
+          tempK:    temp_c + KELVIN_OFFSET,
+          presshPa: press_hpa,
+          seq
+        });
+
+        // 直近 2 秒の実測レート（ファーム 20 Hz に対して何 Hz 届いているか）
+        {
+          const N = rawSession.length;
+          let j = N - 1;
+          while (j > 0 && elapsed_s - rawSession[j].elapsed_s < 2.0) j--;
+          const span = elapsed_s - rawSession[j].elapsed_s;
+          if (span > 0.5) measuredHz = (N - 1 - j) / span;
+        }
+
+        requestRefresh();
+      }
+
+      // ═══════════════════════════════════════════════
+      //  時間軸（doppler-circle.html と同一）
+      // ═══════════════════════════════════════════════
+      function drawTimeAxis(ctx, tMin, tMax, PAD_L, PAD_T, plotW, plotH) {
+        if (tMax <= tMin) return;
+        const toX = t => PAD_L + (t - tMin) / (tMax - tMin) * plotW;
+
+        const span        = tMax - tMin;
+        const targetTicks = Math.max(6, Math.min(10, Math.floor(plotW / 120)));
+        const steps       = [0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600];
+        const step        = steps.find(s => span / s <= targetTicks) || 600;
+        const minorStep   = step >= 1 ? step / 2 : step;
+        const yBase       = PAD_T + plotH;
+
+        ctx.save();
+        ctx.font = '10px "Share Tech Mono",monospace';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 1;
+
+        if (minorStep < step) {
+          for (let s = Math.ceil(tMin / minorStep) * minorStep; s <= tMax + 1e-9; s += minorStep) {
+            if (Math.abs(Math.round(s / step) * step - s) < 1e-6) continue;
+            const x = toX(s);
+            ctx.strokeStyle = 'rgba(160,185,210,0.18)';
+            ctx.beginPath(); ctx.moveTo(x, PAD_T); ctx.lineTo(x, yBase); ctx.stroke();
+            ctx.strokeStyle = 'rgba(100,120,140,0.4)';
+            ctx.beginPath(); ctx.moveTo(x, yBase); ctx.lineTo(x, yBase + 3); ctx.stroke();
+          }
+        }
+        for (let s = Math.ceil(tMin / step) * step; s <= tMax + 1e-9; s += step) {
+          const x = toX(s);
+          ctx.strokeStyle = 'rgba(160,185,210,0.35)';
+          ctx.beginPath(); ctx.moveTo(x, PAD_T); ctx.lineTo(x, yBase); ctx.stroke();
+          ctx.strokeStyle = 'rgba(100,120,140,0.65)';
+          ctx.beginPath(); ctx.moveTo(x, yBase); ctx.lineTo(x, yBase + 5); ctx.stroke();
+          ctx.fillStyle = '#6b8099';
+          ctx.fillText(Number.isInteger(step) ? s.toFixed(0) : s.toFixed(1), x, yBase + 15);
+        }
+        ctx.strokeStyle = 'rgba(100,120,140,0.3)';
+        ctx.beginPath(); ctx.moveTo(PAD_L, yBase); ctx.lineTo(PAD_L + plotW, yBase); ctx.stroke();
+        ctx.restore();
+      }
+
+      // ═══════════════════════════════════════════════
+      //  折れ線グラフ
+      // ═══════════════════════════════════════════════
+      // 描画関数は「論理サイズ (CSS px)」で座標を組む。画面用の canvas は等倍
+      // (_s 未設定) なので canvas.width がそのまま論理幅。画像書き出しはオフスクリーン
+      // canvas を IMG_SCALE 倍にして setTransform を掛けるので、論理サイズは
+      // canvas.width / _s で戻す（PAD_L=66 等の固定 px を壊さない）。
+      function _cw(ctx) { return ctx.canvas.width  / (ctx._s || 1); }
+      function _ch(ctx) { return ctx.canvas.height / (ctx._s || 1); }
+
+      /* 20 Hz で 20 分記録すると 24000 点になる。0.05 s 表示のまま全点に
+         lineTo すると描画が重いうえ、900 px の横幅では 1 px に 27 点が
+         潰れて意味がない。列ごとに min/max を出す間引きにすると、
+         点数を減らしてもストロークの尖りが消えない。 */
+      const MAX_DRAW_COLS = 1200;
+      function decimateMinMax(values, times, maxCols) {
+        const N = values.length;
+        if (N <= maxCols * 2) return { v: values, t: times };
+        const per = Math.ceil(N / maxCols);
+        const v = [], t = [];
+        for (let i = 0; i < N; i += per) {
+          const end = Math.min(i + per, N);
+          let lo = Infinity, hi = -Infinity, iLo = -1, iHi = -1;
+          for (let j = i; j < end; j++) {
+            const x = values[j];
+            if (!isFinite(x)) continue;
+            if (x < lo) { lo = x; iLo = j; }
+            if (x > hi) { hi = x; iHi = j; }
+          }
+          if (iLo < 0) { v.push(NaN); t.push(times[i]); continue; }
+          if (iLo <= iHi) { v.push(lo); t.push(times[iLo]); v.push(hi); t.push(times[iHi]); }
+          else            { v.push(hi); t.push(times[iHi]); v.push(lo); t.push(times[iLo]); }
+        }
+        return { v, t };
+      }
+
+      function _finiteRange(values, minSpan) {
+        let min = Infinity, max = -Infinity;
+        for (const v of values) { if (!isFinite(v)) continue; if (v < min) min = v; if (v > max) max = v; }
+        if (!isFinite(min)) return null;
+        const dMin = min, dMax = max;                 // 余白を足す前の実測値
+        const mid = (min + max) / 2;
+        if (max - min < minSpan) { min = mid - minSpan / 2; max = mid + minSpan / 2; }
+        else { const pad = (max - min) * 0.08; min -= pad; max += pad; }
+        return { min, max, range: max - min, dMin, dMax, span: dMax - dMin };
+      }
+
+      function drawChart(ctx, values, times, color, labelEl, unit, minSpan) {
+        const W = _cw(ctx), H = _ch(ctx);
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, W, H);
+        if (values.length === 0) { if (labelEl) labelEl.textContent = ''; return; }
+
+        const PAD_L = 66, PAD_R = 12, PAD_T = 12, PAD_B = 34;
+        const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+        const sc = _finiteRange(values, minSpan);
+        if (!sc) { if (labelEl) labelEl.textContent = ''; return; }
+        const toY = v => PAD_T + plotH - ((v - sc.min) / sc.range) * plotH;
+
+        let tMax = recordEndTime_s > 0 ? recordEndTime_s : (times[times.length - 1] || 1);
+        if (tMax <= 0) tMax = 1;
+        const tMin = -tMax * 0.025;
+        const toXt = t => PAD_L + (t - tMin) / (tMax - tMin) * plotW;
+
+        // 横グリッドと y 目盛り
+        ctx.strokeStyle = 'rgba(160,185,210,0.5)'; ctx.lineWidth = 1;
+        for (let k = 0; k <= 4; k++) {
+          const y = PAD_T + (k / 4) * plotH;
+          ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(PAD_L + plotW, y); ctx.stroke();
+          ctx.fillStyle = '#6b8099'; ctx.font = '10px "Share Tech Mono",monospace'; ctx.textAlign = 'right';
+          ctx.fillText((sc.max - (k / 4) * sc.range).toFixed(2), PAD_L - 6, y + 4);
+        }
+
+        // ── 本線 ──
+        const dm = decimateMinMax(values, times, MAX_DRAW_COLS);
+        ctx.strokeStyle = color; ctx.lineWidth = 2;
+        ctx.beginPath();
+        let pen0 = false;
+        for (let i = 0; i < dm.v.length; i++) {
+          if (!isFinite(dm.v[i])) { pen0 = false; continue; }
+          const x = toXt(dm.t[i]), y = toY(dm.v[i]);
+          pen0 ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+          pen0 = true;
+        }
+        ctx.stroke();
+
+        // 点数が少ないときは点も打つ（60 s 間隔などで線だけだと読みにくいため）
+        if (values.length <= 120) {
+          ctx.fillStyle = color;
+          for (let i = 0; i < values.length; i++) {
+            if (!isFinite(values[i])) continue;
+            ctx.beginPath(); ctx.arc(toXt(times[i]), toY(values[i]), 2.5, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+        // 最新点を強調
+        const li = values.length - 1;
+        if (isFinite(values[li])) {
+          ctx.fillStyle = color;
+          ctx.beginPath(); ctx.arc(toXt(times[li]), toY(values[li]), 4, 0, Math.PI * 2); ctx.fill();
+        }
+
+        drawTimeAxis(ctx, tMin, tMax, PAD_L, PAD_T, plotW, plotH);
+
+        if (labelEl) {
+          labelEl.textContent =
+            `last ${values[li].toFixed(2)} ${unit}  |  min ${sc.dMin.toFixed(2)} / max ${sc.dMax.toFixed(2)} ${unit}`;
+        }
+      }
+
+      const ctxTemp  = document.getElementById('chartTemp').getContext('2d');
+      const ctxPress = document.getElementById('chartPress').getContext('2d');
+
+      function drawAll() {
+        drawChart(ctxTemp,  agg.k, agg.t, '#cc3300',
+                  document.getElementById('tempAxisLabel'),  'K',   MIN_SPAN_K);
+        drawChart(ctxPress, agg.p, agg.t, '#0077cc',
+                  document.getElementById('pressAxisLabel'), 'hPa', MIN_SPAN_HPA);
+      }
+
+      // ═══════════════════════════════════════════════
+      //  数値表示
+      // ═══════════════════════════════════════════════
+      function setQuality(text, color) {
+        const el = document.getElementById('sQuality');
+        el.textContent = text;
+        el.style.color = color;
+      }
+
+      function updateStats() {
+        const n = agg.k.length;
+        if (n > 0) {
+          document.getElementById('sTempK').textContent = agg.k[n - 1].toFixed(2) + ' K';
+          document.getElementById('sPress').textContent = agg.p[n - 1].toFixed(2) + ' hPa';
+        }
+        const elapsed = rawSession.length > 0 ? rawSession[rawSession.length - 1].elapsed_s : 0;
+        const mm = Math.floor(elapsed / 60), ss = Math.floor(elapsed % 60);
+        document.getElementById('sProgress').textContent =
+          `${mm}:${String(ss).padStart(2,'0')}  /  ${n} 点 (生 ${rawSession.length})`;
+
+        /* 実測の受信レート。ファームは 20 Hz で送るが、接続間隔が長いと
+           中央側で落ちる。ここが 20 Hz を大きく割っていたら、OLED_UPDATE_MS を
+           0 にする / 接続をやり直す / 他の BLE 機器を切る、を試すこと。 */
+        if (isRecording) {
+          const hz = measuredHz > 0 ? `  (受信 ${measuredHz.toFixed(1)} Hz)` : '';
+          const lowRate = measuredHz > 0 && measuredHz < RAW_HZ * 0.8;
+          if (dropCount > 0)   setQuality(`記録中  (取りこぼし ${dropCount})`, 'var(--warn)');
+          else if (lowRate)    setQuality(`記録中${hz}`, 'var(--warn)');
+          else                 setQuality(`記録中${hz}`, 'var(--accent2)');
+        }
+      }
+
+      // 受信が途切れていないか監視する（1.5 s = 3 サンプル分こなければ警告）
+      setInterval(() => {
+        if (!isConnected || !isRecording) return;
+        if (lastRecvMs > 0 && performance.now() - lastRecvMs > 1500) {
+          setQuality('データが来ていません', 'var(--danger)');
+        }
+      }, 500);
+
+      function log(msg) { console.log(msg); }
+
+      // ═══════════════════════════════════════════════
+      //  BLE 接続
+      // ═══════════════════════════════════════════════
+      // macOS ネイティブ全画面では Chrome の Bluetooth ダイアログが画面上端から
+      // はみ出してデバイスを選べないことがあるので警告する（doppler-circle.html と同じ）。
+      function blockedByMacFullscreen() {
+        const isMac = /Mac/i.test(navigator.platform || navigator.userAgent || '');
+        if (!isMac) return false;
+        const chromeless = (screen.height - window.innerHeight) < 80;
+        const atTop      = (window.screenY || window.screenTop || 0) === 0;
+        if (!(chromeless && atTop)) return false;
+        return !window.confirm(
+          '全画面表示を検出しました。\n\n' +
+          'この状態では Bluetooth デバイス選択ダイアログが画面上端からはみ出し、' +
+          'デバイスを選べないことがあります（Chrome / macOS の仕様）。\n\n' +
+          '推奨: ⌃⌘F で全画面を解除してから「Connect」を押してください。\n\n' +
+          'このまま接続を続けますか？'
+        );
+      }
+
+      async function connectSensor() {
+        if (!navigator.bluetooth) {
+          alert('このブラウザは Web Bluetooth に対応していません。\nChrome または Edge をお使いください。');
+          return;
+        }
+        if (blockedByMacFullscreen()) return;
+        try {
+          setBleStatus('SCANNING...');
+          /* 名前の前方一致で絞る。同じ実験室にドップラー実験機など他の
+             environmental_sensing デバイスがあっても選択画面に出てこない。
+             サービスで絞らなくなるので optionalServices の宣言が要る。 */
+          bleDevice = await navigator.bluetooth.requestDevice({
+            filters: [{ namePrefix: 'PEL-BME280' }, { namePrefix: 'BME280' }],
+            optionalServices: ['environmental_sensing']
+          });
+          deviceName      = bleDevice.name || '';
+          devIdFromPacket = '';   // 最初のパケットが来たら本当のIDに置き換わる
+          log(`device: ${bleDevice.name}`);
+          bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+          const server  = await bleDevice.gatt.connect();
+          const service = await server.getPrimaryService('environmental_sensing');
+          bleChar       = await service.getCharacteristic('analog');
+          await bleChar.startNotifications();
+          bleChar.addEventListener('characteristicvaluechanged', onNotify);
+
+          isConnected = true;
+          setBleStatus('CONNECTED: ' + deviceLabel(), true);
+          updateButtonStates();
+        } catch (e) {
+          console.error(e);
+          log('BLE ERROR: ' + e.message);
+          setBleStatus('ERROR');
+        }
+      }
+
+      function onDisconnected() {
+        isConnected = false;
+        lastEspRaw  = -1;   // 再接続先が再起動していると t_s が 0 に戻る
+        setBleStatus('DISCONNECTED');
+        setQuality('切断されました', 'var(--danger)');
+        updateButtonStates();
+      }
+
+      function setBleStatus(text, connected = false) {
+        document.getElementById('bleBadge').className = 'status-badge' + (connected ? ' connected' : '');
+        document.getElementById('bleText').textContent = 'BLE: ' + text;
+      }
+
+      // ═══════════════════════════════════════════════
+      //  ボタン状態
+      // ═══════════════════════════════════════════════
+      function updateButtonStates() {
+        document.getElementById('btnStart').disabled = !isConnected || isRecording;
+        document.getElementById('btnStop').disabled  = !isRecording;
+        document.getElementById('btnReset').disabled = !isConnected && rawSession.length === 0;
+        document.getElementById('btnCsv').disabled   = rawSession.length === 0;
+        document.getElementById('btnImg').disabled   = rawSession.length === 0;
+      }
+
+      // ═══════════════════════════════════════════════
+      //  記録
+      // ═══════════════════════════════════════════════
+      function startRecording() {
+        isRecording     = true;
+        if (!runStamp) runStamp = makeStamp();   // Reset 後の最初の Record で確定
+        firstEspTime    = -1;
+        lastSeq         = -1;
+        dropCount       = 0;
+        recordEndTime_s = 0;
+        rawSession      = [];
+        measuredHz      = 0;
+        espWraps        = 0;      // 時刻の巻き戻し数え直し
+        lastEspRaw      = -1;
+        refreshAggregate();
+        setQuality('記録中', 'var(--accent2)');
+        updateButtonStates();
+      }
+
+      function stopRecording() {
+        if (!isRecording) return;
+        isRecording = false;
+        if (rawSession.length > 0) recordEndTime_s = rawSession[rawSession.length - 1].elapsed_s;
+        setQuality(dropCount > 0 ? `停止  (取りこぼし ${dropCount})` : '停止', 'var(--dim)');
+        refreshAggregate();
+        updateButtonStates();
+      }
+
+      function resetAll() {
+        isRecording     = false;
+        firstEspTime    = -1;
+        lastSeq         = -1;
+        dropCount       = 0;
+        recordEndTime_s = 0;
+        runStamp        = null;   // 次の Record で新しい走行スタンプを取る
+        rawSession      = [];
+        measuredHz      = 0;
+        espWraps        = 0;
+        lastEspRaw      = -1;
+        refreshAggregate();
+        document.getElementById('sTempK').textContent    = '—';
+        document.getElementById('sPress').textContent    = '—';
+        document.getElementById('sProgress').textContent = '—';
+        document.getElementById('tempAxisLabel').textContent  = '';
+        document.getElementById('pressAxisLabel').textContent = '';
+        setQuality('—', 'var(--dim)');
+        updateButtonStates();
+      }
+
+      // ═══════════════════════════════════════════════
+      //  CSV 出力
+      //   平均値版 : 時間(s), 絶対温度(K), 摂氏温度(C), 気圧(hPa), 平均点数
+      //   生データ : 時間(s), 絶対温度(K), 摂氏温度(C), 気圧(hPa), seq
+      //  時間はビン内サンプルの平均時刻。等間隔を仮定していないので、
+      //  取りこぼしがあっても時間列で正しく重み付けできる。
+      // ═══════════════════════════════════════════════
+      // ─── ファイル名（CSV / PNG 共通）─────────────
+      // ローカル時刻で YYYY-MM-DD_HHMMSS。UTC の ISO 形式は日本時間と 9 時間
+      // ずれて分かりにくいため使わない。
+      function makeStamp(d) {
+        const _d = d || new Date();
+        const _p = n => String(n).padStart(2, '0');
+        return `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())}`
+             + `_${_p(_d.getHours())}${_p(_d.getMinutes())}${_p(_d.getSeconds())}`;
+      }
+      // runStamp (YYYY-MM-DD_HHMMSS) を人が読む形に戻す
+      function stampToText(str) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(str || '');
+        return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : '';
+      }
+      // 装置ごとに保存物を見分けるための札。パケットの dev_id を最優先し、
+      // 取れないとき (旧 firmware) だけ OS 報告の名前から拾う。
+      function deviceTag() {
+        if (devIdFromPacket) return devIdFromPacket;
+        const m = /-([0-9A-Fa-f]{4,12})$/.exec(deviceName);
+        return m ? m[1].toUpperCase() : '';
+      }
+      // 画面と書き出し画像に出す装置名。パケットのIDから組み立て直すので、
+      // macOS が古い名前をキャッシュしていても正しい名前が出る。
+      function deviceLabel() {
+        const tag = deviceTag();
+        return tag ? `PEL-BME280-${tag}` : (deviceName || '(device unknown)');
+      }
+      // 走行スタンプが無い場合 (Record を経ずに書き出したとき) だけ現在時刻に落ちる。
+      function fileBase() {
+        if (!runStamp) runStamp = makeStamp();
+        const tag = deviceTag();
+        return tag ? `thermo_${tag}_${runStamp}` : `thermo_${runStamp}`;
+      }
+
+      function buildCsv() {
+        const raw = document.getElementById('chkRaw').checked;
+        if (raw) {
+          let out = '時間(s),絶対温度(K),摂氏温度(C),気圧(hPa),seq\n';
+          for (const s of rawSession) {
+            out += `${s.elapsed_s.toFixed(3)},${s.tempK.toFixed(3)},`
+                 + `${s.tempC.toFixed(3)},${s.presshPa.toFixed(3)},${s.seq}\n`;
+          }
+          return out;
+        }
+        let out = '時間(s),絶対温度(K),摂氏温度(C),気圧(hPa),平均点数\n';
+        for (let i = 0; i < agg.t.length; i++) {
+          out += `${agg.t[i].toFixed(3)},${agg.k[i].toFixed(3)},`
+               + `${(agg.k[i] - KELVIN_OFFSET).toFixed(3)},${agg.p[i].toFixed(3)},${agg.n[i]}\n`;
+        }
+        return out;
+      }
+
+      function refreshCsvModal() {
+        const csv  = buildCsv();
+        const rows = Math.max(0, csv.split('\n').length - 2);
+        document.getElementById('csvOutput').value         = csv;
+        document.getElementById('csvRowCount').textContent = `${rows} rows`;
+      }
+
+      function showCsvModal() {
+        refreshCsvModal();
+        document.getElementById('csvModal').classList.add('open');
+      }
+
+
+      // ═══════════════════════════════════════════════
+      //  画像書き出し（レポート貼付用）
+      // ═══════════════════════════════════════════════
+      //  設計方針（doppler-circle.html と同じ）:
+      //   - 画面のコピーではなく「レポートに貼る 1 枚」を組版する。canvas の縦横比は
+      //     ウィンドウサイズ依存なので、画面をそのまま出すと生徒ごとに別物の図になり、
+      //     教員が並べて比較できない。ここは固定レイアウト。
+      //   - 画面には出ているが canvas には無い数値 (記録間隔・min/max・点数・記録時間)
+      //     を見出し帯として載せる。図だけでなく「記録票」として成立させる。
+      //   - **装置名を見出しに入れる**。複数台を同時に使う実験室で、あとから
+      //     「この図はどの装置のものか」が分からなくなるのを防ぐ。
+      //   - 描画は既存の drawChart() をそのまま流用し、オフスクリーンで 2 倍に描く
+      //     (DPR ではなく固定 2 倍 = どの PC でも同じ画像が出る)。
+      //   - 画面の canvas には一切触らない (再描画のちらつきを避ける)。
+      // ═══════════════════════════════════════════════
+      const IMG_SCALE = 2;      // 常に 2 倍で描画（PNG 実寸 = 論理サイズ × 2）
+      const IMG_W     = 1000;   // 論理幅 (pt)
+      const IMG_M     = 28;     // 余白
+      const IMG_HEAD  = 58;     // 見出し帯
+      const IMG_STAT  = 62;     // 数値行
+      const IMG_TITLE = 20;     // グラフ見出し
+      const IMG_CH    = 300;    // グラフ 1 枚の高さ
+      const IMG_FOOT  = 26;     // 帰属表示
+
+      function _newCtx(w, h) {
+        const c = document.createElement('canvas');
+        c.width  = Math.round(w * IMG_SCALE);
+        c.height = Math.round(h * IMG_SCALE);
+        const g = c.getContext('2d');
+        g._s = IMG_SCALE;                        // _cw/_ch が論理サイズを戻すための印
+        g.setTransform(IMG_SCALE, 0, 0, IMG_SCALE, 0, 0);
+        return g;
+      }
+
+      // 画像に載せる数値。単位はラベル側に置き、値は数字だけにして桁が
+      // セル幅からはみ出さないようにする。
+      function imgStats() {
+        const dur = recordEndTime_s > 0 ? recordEndTime_s
+                  : (rawSession.length ? rawSession[rawSession.length - 1].elapsed_s : 0);
+        const kOk = agg.k.length > 0, pOk = agg.p.length > 0;
+        return [
+          ['記録間隔',            binSec < 1 ? `${binSec} s (生)` : `${binSec} s`],
+          ['絶対温度 min/max [K]',   kOk ? `${Math.min(...agg.k).toFixed(2)} / ${Math.max(...agg.k).toFixed(2)}` : '—'],
+          ['気圧 min/max [hPa]',     pOk ? `${Math.min(...agg.p).toFixed(2)} / ${Math.max(...agg.p).toFixed(2)}` : '—'],
+          ['記録時間',            `${dur.toFixed(1)} s`],
+          ['データ点数',          `${agg.k.length} pts`],
+        ];
+      }
+
+      function buildExportCanvas() {
+        const CW = IMG_W - IMG_M * 2;
+        const H  = IMG_M + IMG_HEAD + IMG_STAT + 14
+                 + (IMG_TITLE + IMG_CH) + 14
+                 + (IMG_TITLE + IMG_CH) + 12 + 22
+                 + IMG_FOOT + IMG_M;
+
+        const g = _newCtx(IMG_W, H);
+        g.fillStyle = '#ffffff';
+        g.fillRect(0, 0, IMG_W, H);
+
+        let y = IMG_M;
+
+        // ---- 見出し帯 ----
+        g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+        g.fillStyle = '#0077cc';
+        g.font = '800 17px "Exo 2", sans-serif';
+        g.fillText('温度・圧力モニター', IMG_M, y + 16);
+        g.fillStyle = '#5a6b7a';
+        g.font = '11px "Share Tech Mono", monospace';
+        g.fillText(deviceLabel(), IMG_M, y + 33);
+        g.textAlign = 'right';
+        g.fillText(`${fileBase()}.png`, IMG_W - IMG_M, y + 10);
+        g.fillText(`記録 ${stampToText(runStamp)}`, IMG_W - IMG_M, y + 27);
+        g.strokeStyle = '#c4ccd4'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(IMG_M, y + 42); g.lineTo(IMG_W - IMG_M, y + 42); g.stroke();
+        y += IMG_HEAD;
+
+        // ---- 数値行 ----
+        const stats = imgStats();
+        const cellW = CW / stats.length;
+        g.strokeStyle = '#c4ccd4'; g.lineWidth = 1;
+        g.beginPath();
+        if (g.roundRect) g.roundRect(IMG_M + 0.5, y + 0.5, CW - 1, IMG_STAT - 8, 6);
+        else             g.rect(IMG_M + 0.5, y + 0.5, CW - 1, IMG_STAT - 8);
+        g.stroke();
+        stats.forEach(([label, value], i) => {
+          const x = IMG_M + cellW * i;
+          if (i > 0) {
+            g.strokeStyle = '#dde3e9';
+            g.beginPath(); g.moveTo(x, y + 8); g.lineTo(x, y + IMG_STAT - 16); g.stroke();
+          }
+          g.textAlign = 'left';
+          g.fillStyle = '#5a6b7a';
+          g.font = '9px "Exo 2", sans-serif';
+          g.fillText(label, x + 12, y + 18);
+          g.fillStyle = '#1a2b3c';
+          g.font = '14px "Share Tech Mono", monospace';
+          g.fillText(value, x + 12, y + 40);
+        });
+        y += IMG_STAT + 14;
+
+        // ---- グラフ 2 枚 ----
+        const panels = [
+          ['絶対温度 (K)',  agg.k, '#cc3300', MIN_SPAN_K,   'K'],
+          ['気圧 (hPa)',    agg.p, '#0077cc', MIN_SPAN_HPA, 'hPa'],
+        ];
+        panels.forEach(([title, vals, color, minSpan, unit], idx) => {
+          g.textAlign = 'left';
+          g.fillStyle = '#5a6b7a';
+          g.font = '11px "Exo 2", sans-serif';
+          g.fillText(title, IMG_M, y + 13);
+          y += IMG_TITLE;
+          const sub = _newCtx(CW, IMG_CH);
+          drawChart(sub, vals, agg.t, color, null, unit, minSpan);
+          g.strokeStyle = '#c4ccd4'; g.lineWidth = 1;
+          g.strokeRect(IMG_M + 0.5, y + 0.5, CW - 1, IMG_CH - 1);
+          g.drawImage(sub.canvas, IMG_M, y, CW, IMG_CH);
+          y += IMG_CH + (idx === 0 ? 14 : 12);
+        });
+        g.textAlign = 'center';
+        g.fillStyle = '#5a6b7a';
+        g.font = '11px "Share Tech Mono", monospace';
+        g.fillText('時間 (s)', IMG_M + CW / 2, y + 14);
+
+        // ---- 帰属表示 ----
+        g.textAlign = 'center';
+        g.fillStyle = '#8a97a3';
+        g.font = '9px "Exo 2", sans-serif';
+        g.fillText('Physics Exam Lab - Thermo Monitor  |  © 2026 一般社団法人 国際物理オリンピック2023記念協会  |  CC BY-NC 4.0',
+                   IMG_W / 2, H - IMG_M + 4);
+
+        return g.canvas;
+      }
+
+      let imgCanvas = null;
+
+      function refreshImgPreview() {
+        imgCanvas = buildExportCanvas();
+        document.getElementById('imgPreview').src = imgCanvas.toDataURL('image/png');
+        document.getElementById('imgInfo').textContent =
+          `${imgCanvas.width} × ${imgCanvas.height} px  /  ${fileBase()}.png`;
+      }
+
+      async function showImgModal() {
+        // Web フォント確定前に描くと字形が変わるので待つ（初期化と同じ作法）
+        if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (_) {} }
+        refreshImgPreview();
+        document.getElementById('imgModal').classList.add('open');
+      }
+
+      // ═══════════════════════════════════════════════
+      //  イベント
+      // ═══════════════════════════════════════════════
+      const sel = document.getElementById('selInterval');
+      INTERVAL_OPTIONS.forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = String(o.sec);
+        opt.textContent = o.label;
+        if (o.sec === INTERVAL_DEFAULT_SEC) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', () => {
+        binSec = parseFloat(sel.value);
+        refreshAggregate();   // 記録済みデータもその場で再平均される
+      });
+
+      document.getElementById('btnConnect').addEventListener('click', connectSensor);
+      document.getElementById('btnStart').addEventListener('click',   startRecording);
+      document.getElementById('btnStop').addEventListener('click',    stopRecording);
+      document.getElementById('btnReset').addEventListener('click',   resetAll);
+      document.getElementById('btnCsv').addEventListener('click',     showCsvModal);
+      document.getElementById('btnImg').addEventListener('click',     showImgModal);
+      document.getElementById('chkRaw').addEventListener('change',    refreshCsvModal);
+
+      document.getElementById('btnCloseModal').addEventListener('click', () => {
+        document.getElementById('csvModal').classList.remove('open');
+      });
+      document.getElementById('btnCloseImgModal').addEventListener('click', () => {
+        document.getElementById('imgModal').classList.remove('open');
+      });
+      document.getElementById('btnImgSave').addEventListener('click', () => {
+        const name = `${fileBase()}.png`;
+        imgCanvas.toBlob(blob => {
+          const url = URL.createObjectURL(blob);
+          const a   = document.createElement('a');
+          a.href = url; a.download = name;
+          a.click();
+          URL.revokeObjectURL(url);
+        }, 'image/png');
+        const btn = document.getElementById('btnImgSave');
+        btn.textContent = '保存しました';
+        setTimeout(() => { btn.textContent = '画像を保存'; }, 1400);
+      });
+      document.getElementById('btnImgCopy').addEventListener('click', async () => {
+        const btn = document.getElementById('btnImgCopy');
+        try {
+          // toBlob は非同期でユーザ操作の文脈を失うため、Blob そのものではなく
+          // Blob に解決する Promise を ClipboardItem に渡す (Chrome の作法)。
+          const item = new ClipboardItem({
+            'image/png': new Promise(res => imgCanvas.toBlob(res, 'image/png')),
+          });
+          await navigator.clipboard.write([item]);
+          btn.textContent = 'コピーしました';
+        } catch (e) {
+          console.warn('[img] clipboard write failed:', e);
+          btn.textContent = 'コピー不可 → 保存へ';
+        }
+        setTimeout(() => { btn.textContent = '画像をコピー'; }, 1600);
+      });
+
+      document.getElementById('btnCopy').addEventListener('click', async () => {
+        // 表計算に貼るならタブ区切りが確実（CSV のままだと 1 列に入る）
+        const tsv = buildCsv().split('\n').map(l => l.split(',').join('\t')).join('\r\n');
+        const btn = document.getElementById('btnCopy');
+        const fallback = () => {
+          const ta = document.createElement('textarea');
+          ta.value = tsv;
+          ta.style.position = 'fixed';
+          ta.style.opacity  = '0';
+          document.body.appendChild(ta);
+          ta.focus(); ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        };
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(tsv);
+          } else { fallback(); }
+        } catch (_) { fallback(); }
+        btn.textContent = 'コピーしました';
+        setTimeout(() => { btn.textContent = '表計算に貼り付け（コピー）'; }, 1200);
+      });
+
+      document.getElementById('btnDownload').addEventListener('click', () => {
+        const blob = new Blob(['﻿', buildCsv()], { type: 'text/csv;charset=utf-8' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        // ファイル名は「保存した時刻」ではなく走行スタンプ (= Record を押した時刻)。
+        // 同じデータから出した PNG と対になる。装置名の 6 桁も入る。
+        a.download = `${fileBase()}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+
+      // ═══════════════════════════════════════════════
+      //  Canvas リサイズ（グラフ 2 枚で縦を分け合う）
+      // ═══════════════════════════════════════════════
+      const CH_MIN = 140;
+
+      function _sumStyle(el, ...props) {
+        const cs = getComputedStyle(el);
+        return props.reduce((s, p) => s + (parseFloat(cs[p]) || 0), 0);
+      }
+      function _panelChrome(panel) {
+        const hdr = panel.querySelector('.chart-header');
+        return _sumStyle(panel, 'paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth')
+             + (hdr ? hdr.offsetHeight : 0);
+      }
+
+      function resizeCanvases() {
+        const tempPanel  = ctxTemp.canvas.parentElement;
+        const pressPanel = ctxPress.canvas.parentElement;
+
+        for (const [ctx, panel] of [[ctxTemp, tempPanel], [ctxPress, pressPanel]]) {
+          ctx.canvas.width = Math.max(220,
+            Math.round(panel.clientWidth - _sumStyle(panel, 'paddingLeft', 'paddingRight')));
+        }
+
+        const mainEl    = document.querySelector('main');
+        const headerEl  = document.querySelector('header');
+        const footerEl  = document.querySelector('footer');
+        const controls  = document.querySelector('.controls');
+        const strip     = document.querySelector('.info-strip');
+        const chartArea = document.querySelector('.chart-area');
+        const axisEl    = document.querySelector('.time-axis-caption');
+
+        const mainGap = parseFloat(getComputedStyle(mainEl).rowGap) || 0;
+        const areaGap = parseFloat(getComputedStyle(chartArea).rowGap) || 0;
+
+        const budget = Math.max(0,
+          window.innerHeight
+            - headerEl.offsetHeight
+            - footerEl.offsetHeight
+            - _sumStyle(mainEl, 'paddingTop', 'paddingBottom')
+            - controls.offsetHeight
+            - strip.offsetHeight
+            - mainGap * 2
+            - (axisEl ? axisEl.offsetHeight : 0)
+            - areaGap * 2
+            - 24);
+
+        // 2 枚で等分し、それぞれのパネル装飾ぶんを引く
+        const per = budget / 2;
+        ctxTemp.canvas.height  = Math.max(CH_MIN, Math.round(per - _panelChrome(tempPanel)));
+        ctxPress.canvas.height = Math.max(CH_MIN, Math.round(per - _panelChrome(pressPanel)));
+
+        drawAll();
+      }
+
+      let _resizeTimer = null;
+      window.addEventListener('resize', () => {
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(resizeCanvases, 120);
+      });
+      // パネル幅の変化を直接監視する。Web フォントの読み込みやレイアウト確定が
+      // 遅れると、初回の resizeCanvases() が確定前の寸法を拾ってグラフが潰れる。
+      // resize イベントだけに頼らず、実寸が変わったら描き直す。
+      if (window.ResizeObserver) {
+        const ro = new ResizeObserver(() => {
+          clearTimeout(_resizeTimer);
+          _resizeTimer = setTimeout(resizeCanvases, 60);
+        });
+        ro.observe(document.querySelector('.chart-area'));
+        ro.observe(document.querySelector('main'));
+      }
+
+      resizeCanvases();
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(resizeCanvases);
+
+    </script>
+  </body>
+</html>
